@@ -1,99 +1,151 @@
-import { chromium } from 'playwright';
+import { CrawlerService } from './archive/CrawlerService.ts';
+import { AssetExtractor } from './archive/AssetExtractor.ts';
+import { AssetDownloader } from './archive/AssetDownloader.ts';
+import { UrlRewriter } from './archive/UrlRewriter.ts';
+import fs from 'fs/promises';
+import path from 'path';
+
+interface ArchiveMetadata {
+  id: string;
+  url: string;
+  status: 'processing' | 'completed' | 'failed';
+  createdAt: string;
+  completedAt?: string;
+  error?: string;
+  pageCount?: number;
+  assetCount?: number;
+  totalSize?: number;
+}
 
 export class ArchiveService {
+  private crawler = new CrawlerService();
+  private extractor = new AssetExtractor();
+  private downloader = new AssetDownloader();
+  private rewriter = new UrlRewriter();
+  private archives = new Map<string, ArchiveMetadata>();
+  private archivesFile = path.join(process.cwd(), 'data', 'archives.json');
+  private initialized = false;
 
-  async createArchive(url: string) {
+  async createArchive(url: string): Promise<{ id: string; status: string; message: string }> {
+    await this.ensureInitialized();
+    
     const archiveId = this.generateId();
+    const metadata: ArchiveMetadata = {
+      id: archiveId,
+      url,
+      status: 'processing',
+      createdAt: new Date().toISOString(),
+    };
     
-    // Main archiving workflow
-    const discoveredUrls = await this.discoverUrls(url);
-    const assets = await this.extractAssets(discoveredUrls);
-    const localPaths = await this.downloadAssets(assets, archiveId);
-    await this.rewriteUrls(discoveredUrls, localPaths, archiveId);
+    this.archives.set(archiveId, metadata);
+    await this.saveArchives();
     
-    return { id: archiveId, status: 'completed' };
+    // Start archiving process asynchronously
+    this.processArchive(archiveId, url).catch(error => {
+      console.error(`Archive ${archiveId} failed:`, error);
+      const archive = this.archives.get(archiveId);
+      if (archive) {
+        archive.status = 'failed';
+        archive.error = error.message;
+        this.saveArchives();
+      }
+    });
+    
+    return {
+      id: archiveId,
+      status: 'started',
+      message: 'Archive process initiated'
+    };
   }
 
-  async getArchiveStatus(id: string) {
-    // TODO: Implement archive status retrieval
-    return null;
+  private async processArchive(archiveId: string, url: string): Promise<void> {
+    try {
+      console.log(`🚀 Starting archive process for: ${url}`);
+      
+      // Step 1: Crawl website once to get ALL page data (URLs + HTML + links)
+      console.log(`🔍 Crawling website (single pass)...`);
+      const pagesData = await this.crawler.crawlWebsite(url);
+      console.log(`Crawled ${pagesData.length} pages with complete data`);
+      
+      // Step 2: Extract all assets from the crawled pages
+      console.log(`🔧 Extracting assets...`);
+      const assets = await this.extractor.extractAssetsFromPages(pagesData);
+      console.log(`Found ${assets.length} assets to download`);
+      
+      // Step 3: Download all assets
+      console.log(`⬇️ Downloading assets...`);
+      const urlMappings = await this.downloader.downloadAssets(assets, archiveId);
+      
+      // Step 4: Rewrite URLs in HTML and CSS files
+      console.log(`✏️ Rewriting URLs...`);
+      await this.rewriter.rewriteUrls(pagesData, urlMappings, archiveId);
+      
+      // Step 5: Save metadata and mark as completed
+      const archive = this.archives.get(archiveId);
+      if (archive) {
+        archive.status = 'completed';
+        archive.completedAt = new Date().toISOString();
+        archive.pageCount = pagesData.length;
+        archive.assetCount = assets.length;
+        await this.saveArchives();
+      }
+      
+      console.log(`✅ Archive ${archiveId} completed successfully`);
+      
+    } catch (error) {
+      console.error(`❌ Archive ${archiveId} failed:`, error);
+      throw error;
+    }
   }
 
-  async listArchives() {
-    // TODO: Implement archive listing
-    return { archives: [], total: 0 };
+  async getArchiveStatus(id: string): Promise<ArchiveMetadata | null> {
+    await this.ensureInitialized();
+    return this.archives.get(id) || null;
   }
 
-  private async discoverUrls(startUrl: string): Promise<string[]> {
-    // Crawl website to find all internal URLs
-    // Return array of all pages to archive
-    return [];
+  async listArchives(): Promise<{ archives: ArchiveMetadata[]; total: number }> {
+    await this.ensureInitialized();
+    return {
+      archives: Array.from(this.archives.values()),
+      total: this.archives.size
+    };
   }
 
-  private async extractAssets(urls: string[]): Promise<Asset[]> {
-    // For each URL, extract all assets (CSS, JS, images, etc.)
-    // Return array of assets with their URLs and types
-    return [];
+  private async ensureInitialized(): Promise<void> {
+    if (!this.initialized) {
+      await this.loadArchives();
+      this.initialized = true;
+    }
   }
 
-  private async downloadAssets(assets: Asset[], archiveId: string): Promise<Map<string, string>> {
-    // Download all assets to local storage
-    // Return mapping of original URL -> local file path
-    return new Map();
+  private async loadArchives(): Promise<void> {
+    try {
+      const data = await fs.readFile(this.archivesFile, 'utf8');
+      const archivesArray = JSON.parse(data);
+      this.archives = new Map(archivesArray);
+      console.log(`📂 Loaded ${this.archives.size} archives from storage`);
+    } catch (error) {
+      console.log('📂 No existing archives file found, starting fresh');
+      this.archives = new Map();
+    }
   }
 
-  private async rewriteUrls(urls: string[], urlMappings: Map<string, string>, archiveId: string): Promise<void> {
-    // Rewrite all HTML/CSS files to use local asset paths
-    // Save modified files to archive folder
-  }
-
-  private async crawlPage(url: string): Promise<PageData> {
-    // Use Playwright to navigate to page and extract content
-    // Return HTML, title, and discovered links
-    return { url, html: '', title: '', links: [] };
-  }
-
-  private async parseAssetsFromHtml(html: string, baseUrl: string): Promise<Asset[]> {
-    // Parse HTML to find CSS, JS, image URLs
-    // Return array of assets found on this page
-    return [];
-  }
-
-  private async parseAssetsFromCss(css: string, baseUrl: string): Promise<Asset[]> {
-    // Parse CSS to find background images, fonts, imports
-    // Return array of assets found in CSS
-    return [];
-  }
-
-  private isSameDomain(url1: string, url2: string): boolean {
-    // Check if URLs are on the same domain
-    return false;
-  }
-
-  private resolveUrl(baseUrl: string, relativeUrl: string): string {
-    // Convert relative URLs to absolute URLs
-    return '';
-  }
-
-  private generateLocalPath(originalUrl: string, type: string): string {
-    // Generate local file path for downloaded asset
-    return '';
+  private async saveArchives(): Promise<void> {
+    try {
+      await fs.mkdir(path.dirname(this.archivesFile), { recursive: true });
+      const archivesArray = Array.from(this.archives.entries());
+      await fs.writeFile(this.archivesFile, JSON.stringify(archivesArray, null, 2));
+    } catch (error) {
+      console.error('Failed to save archives:', error);
+    }
   }
 
   private generateId(): string {
     return Date.now().toString(36) + Math.random().toString(36).substr(2);
   }
-}
 
-interface Asset {
-  url: string;
-  type: 'css' | 'js' | 'image' | 'font' | 'other';
-  foundOn: string; // Which page this asset was found on
-}
-
-interface PageData {
-  url: string;
-  html: string;
-  title: string;
-  links: string[]; // Internal links found on this page
+  // Configuration methods
+  setCrawlerLimits(maxDepth: number, maxPages: number): void {
+    this.crawler.setLimits(maxDepth, maxPages);
+  }
 }
