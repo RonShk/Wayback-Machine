@@ -2,7 +2,7 @@ import * as cheerio from 'cheerio';
 
 export interface Asset {
   url: string;
-  type: 'css' | 'js' | 'image' | 'font' | 'other';
+  type: 'css' | 'js' | 'image' | 'font' | 'model' | 'other';
   foundOn: string;
 }
 
@@ -10,14 +10,53 @@ export class AssetExtractor {
   
   async extractAssetsFromPages(pagesData: Array<{url: string, html: string}>): Promise<Asset[]> {
     const allAssets: Asset[] = [];
+    const jsFilesToParse: Asset[] = [];
     
     for (const page of pagesData) {
       const htmlAssets = await this.parseAssetsFromHtml(page.html, page.url);
       allAssets.push(...htmlAssets);
       
+      // Collect JS files for later parsing
+      jsFilesToParse.push(...htmlAssets.filter(asset => asset.type === 'js'));
+      
       // Extract assets from inline CSS
       const cssAssets = await this.extractFromInlineCSS(page.html, page.url);
       allAssets.push(...cssAssets);
+      
+      // Extract assets from JavaScript content (inline scripts only for now)
+      const jsAssets = await this.extractFromJavaScript(page.html, page.url);
+      allAssets.push(...jsAssets);
+    }
+    
+    // Parse external JavaScript files for additional asset references
+    console.log(`🔍 Parsing ${jsFilesToParse.length} external JS files for asset references...`);
+    for (const jsAsset of jsFilesToParse) {
+      try {
+        const jsContent = await this.fetchJavaScriptContent(jsAsset.url);
+        if (jsContent) {
+          const additionalAssets = this.parseAssetsFromJavaScript(jsContent, jsAsset.url);
+          console.log(`🔍 Found ${additionalAssets.length} additional assets in ${jsAsset.url}`);
+          allAssets.push(...additionalAssets);
+        }
+      } catch (error) {
+        console.log(`⚠️ Failed to parse JS file ${jsAsset.url}:`, error instanceof Error ? error.message : String(error));
+      }
+    }
+    
+    // Also parse external CSS files for additional asset references
+    const cssFilesToParse = allAssets.filter(asset => asset.type === 'css');
+    console.log(`🎨 Parsing ${cssFilesToParse.length} external CSS files for asset references...`);
+    for (const cssAsset of cssFilesToParse) {
+      try {
+        const cssContent = await this.fetchCSSContent(cssAsset.url);
+        if (cssContent) {
+          const additionalAssets = this.parseAssetsFromCssSync(cssContent, cssAsset.url);
+          console.log(`🎨 Found ${additionalAssets.length} additional assets in ${cssAsset.url}`);
+          allAssets.push(...additionalAssets);
+        }
+      } catch (error) {
+        console.log(`⚠️ Failed to parse CSS file ${cssAsset.url}:`, error instanceof Error ? error.message : String(error));
+      }
     }
     
     // Remove duplicates
@@ -152,6 +191,128 @@ export class AssetExtractor {
     return assets;
   }
 
+  private async extractFromJavaScript(html: string, baseUrl: string): Promise<Asset[]> {
+    const $ = cheerio.load(html);
+    const assets: Asset[] = [];
+
+    // Extract from inline JavaScript
+    $('script:not([src])').each((_, el) => {
+      const jsContent = $(el).html();
+      if (jsContent) {
+        const jsAssets = this.parseAssetsFromJavaScript(jsContent, baseUrl);
+        assets.push(...jsAssets);
+      }
+    });
+
+    return assets;
+  }
+
+  private parseAssetsFromJavaScript(jsContent: string, baseUrl: string): Asset[] {
+    const assets: Asset[] = [];
+    
+    // Enhanced patterns for asset URLs in JavaScript
+    const patterns = [
+      // String literals with file extensions (more comprehensive)
+      /"([^"]*\.(glb|gltf|obj|fbx|dae|3ds|ply|stl|woff2?|ttf|eot|otf|png|jpe?g|gif|svg|webp|ico|css|js|mjs|json|xml|pdf|mp[34]|webm|ogg|wav|bin|data))"/gi,
+      /'([^']*\.(glb|gltf|obj|fbx|dae|3ds|ply|stl|woff2?|ttf|eot|otf|png|jpe?g|gif|svg|webp|ico|css|js|mjs|json|xml|pdf|mp[34]|webm|ogg|wav|bin|data))'/gi,
+      // Template literals
+      /`([^`]*\.(glb|gltf|obj|fbx|dae|3ds|ply|stl|woff2?|ttf|eot|otf|png|jpe?g|gif|svg|webp|ico|css|js|mjs|json|xml|pdf|mp[34]|webm|ogg|wav|bin|data))`/gi,
+      // Import statements (ES6 and CommonJS)
+      /import\s+.*?\s+from\s+['"]([^'"]+)['"]/gi,
+      /require\s*\(\s*['"]([^'"]+)['"]\s*\)/gi,
+      // Dynamic imports
+      /import\s*\(\s*['"]([^'"]+)['"]\s*\)/gi,
+      // Fetch calls and XHR
+      /fetch\s*\(\s*['"]([^'"]+)['"]/gi,
+      /\.open\s*\(\s*['"][^'"]*['"]\s*,\s*['"]([^'"]+)['"]/gi,
+      // Asset loading patterns
+      /(?:src|href|url|path|file|asset)\s*[:=]\s*['"]([^'"]*\.(glb|gltf|obj|fbx|dae|3ds|ply|stl|woff2?|ttf|eot|otf|png|jpe?g|gif|svg|webp|ico|css|js|mjs|json|xml|pdf|mp[34]|webm|ogg|wav|bin|data))['"]?/gi,
+      // Webpack chunk patterns
+      /["']([^"']*chunk[^"']*\.js)["']/gi,
+      /["']([^"']*-[a-f0-9]{8,}\.js)["']/gi,
+      // GitHub specific patterns
+      /["']([^"']*\/js\/[^"']*\.(glb|js|css|png|svg))["']/gi,
+      // URL constructor patterns
+      /new\s+URL\s*\(\s*['"]([^'"]+)['"]/gi,
+      // Asset path patterns in objects
+      /['"]?(?:path|url|src|href)['"]?\s*:\s*['"]([^'"]*\.(glb|gltf|obj|fbx|dae|3ds|ply|stl|woff2?|ttf|eot|otf|png|jpe?g|gif|svg|webp|ico|css|js|mjs|json|xml|pdf|mp[34]|webm|ogg|wav|bin|data))['"]?/gi,
+    ];
+
+    for (const pattern of patterns) {
+      let match;
+      while ((match = pattern.exec(jsContent)) !== null) {
+        const url = match[1];
+        if (url && !url.startsWith('data:') && !url.startsWith('blob:') && !url.startsWith('javascript:')) {
+          try {
+            const resolvedUrl = this.resolveUrl(baseUrl, url);
+            const assetType = this.determineAssetType(url);
+            
+            console.log(`🔍 Found JS asset: ${resolvedUrl} (${assetType})`);
+            
+            assets.push({
+              url: resolvedUrl,
+              type: assetType,
+              foundOn: baseUrl
+            });
+          } catch (error) {
+            // Skip invalid URLs
+            console.log(`⚠️ Skipping invalid URL from JS: ${url}`);
+          }
+        }
+      }
+    }
+
+    return assets;
+  }
+
+  private async fetchJavaScriptContent(url: string): Promise<string | null> {
+    try {
+      console.log(`📥 Fetching JS content from: ${url}`);
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        },
+
+      });
+      
+      if (!response.ok) {
+        console.log(`⚠️ Failed to fetch JS file: ${url} (${response.status})`);
+        return null;
+      }
+      
+      const content = await response.text();
+      console.log(`✅ Fetched ${content.length} characters from ${url}`);
+      return content;
+    } catch (error) {
+      console.log(`❌ Error fetching JS file ${url}:`, error instanceof Error ? error.message : String(error));
+      return null;
+    }
+  }
+
+  private async fetchCSSContent(url: string): Promise<string | null> {
+    try {
+      console.log(`📥 Fetching CSS content from: ${url}`);
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        },
+
+      });
+      
+      if (!response.ok) {
+        console.log(`⚠️ Failed to fetch CSS file: ${url} (${response.status})`);
+        return null;
+      }
+      
+      const content = await response.text();
+      console.log(`✅ Fetched ${content.length} characters from ${url}`);
+      return content;
+    } catch (error) {
+      console.log(`❌ Error fetching CSS file ${url}:`, error instanceof Error ? error.message : String(error));
+      return null;
+    }
+  }
+
   private determineAssetType(url: string): Asset['type'] {
     const extension = url.split('.').pop()?.toLowerCase();
     
@@ -159,6 +320,7 @@ export class AssetExtractor {
     if (['js', 'mjs'].includes(extension || '')) return 'js';
     if (['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp', 'ico'].includes(extension || '')) return 'image';
     if (['woff', 'woff2', 'ttf', 'eot', 'otf'].includes(extension || '')) return 'font';
+    if (['glb', 'gltf', 'obj', 'fbx', 'dae', '3ds', 'ply', 'stl'].includes(extension || '')) return 'model';
     
     return 'other';
   }

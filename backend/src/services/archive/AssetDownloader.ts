@@ -158,6 +158,7 @@ export class AssetDownloader {
       js: '.js',
       image: '.png',
       font: '.woff2',
+      model: '.glb',
       other: '.bin'
     };
     
@@ -170,6 +171,7 @@ export class AssetDownloader {
       js: 'js',
       image: 'images',
       font: 'fonts',
+      model: 'models',
       other: 'other'
     };
     

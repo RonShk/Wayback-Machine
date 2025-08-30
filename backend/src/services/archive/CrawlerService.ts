@@ -60,7 +60,7 @@ export class CrawlerService {
     const page = await browser.newPage();
     
     try {
-      await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
+      await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 });
       
       const html = await page.content();
       const title = await page.title();

@@ -51,13 +51,38 @@ export class UrlRewriter {
     $('link[rel="stylesheet"]').each((_, el) => {
       const href = $(el).attr('href');
       if (href) {
+        let mappedPath = null;
+        
+        // Try exact match first
         if (urlMappings.has(href)) {
-          $(el).attr('href', './' + urlMappings.get(href));
+          mappedPath = urlMappings.get(href);
+        } else {
+          // Try to find a mapping by checking if any URL ends with the same path
+          for (const [originalUrl, localPath] of urlMappings.entries()) {
+            if (href.startsWith('/') && originalUrl.endsWith(href)) {
+              mappedPath = localPath;
+              console.log(`🔗 Mapped absolute path ${href} to ${localPath} via ${originalUrl}`);
+              break;
+            }
+            // Also try matching just the filename
+            const hrefFilename = href.split('/').pop();
+            const originalFilename = originalUrl.split('/').pop();
+            if (hrefFilename && originalFilename && hrefFilename === originalFilename && localPath.includes('css/')) {
+              mappedPath = localPath;
+              console.log(`🔗 Mapped by filename ${href} to ${localPath}`);
+              break;
+            }
+          }
+        }
+        
+        if (mappedPath) {
+          $(el).attr('href', './' + mappedPath);
         } else if (href.includes('fonts.googleapis.com') || href.includes('fonts.gstatic.com')) {
           // For external font URLs that couldn't be downloaded, remove them
-          // The fallback fonts in ViewerService will handle this
           console.log(`🔤 Removing external font link: ${href}`);
           $(el).remove();
+        } else {
+          console.log(`⚠️ Could not map CSS link: ${href}`);
         }
       }
     });
@@ -65,26 +90,80 @@ export class UrlRewriter {
     // Rewrite script sources
     $('script[src]').each((_, el) => {
       const src = $(el).attr('src');
-      if (src && urlMappings.has(src)) {
-        $(el).attr('src', './' + urlMappings.get(src));
+      if (src) {
+        let mappedPath = null;
+        
+        // Try exact match first
+        if (urlMappings.has(src)) {
+          mappedPath = urlMappings.get(src);
+        } else {
+          // Try to find a mapping by checking if any URL ends with the same path
+          for (const [originalUrl, localPath] of urlMappings.entries()) {
+            if (src.startsWith('/') && originalUrl.endsWith(src)) {
+              mappedPath = localPath;
+              console.log(`🔗 Mapped absolute script path ${src} to ${localPath} via ${originalUrl}`);
+              break;
+            }
+            // Also try matching just the filename
+            const srcFilename = src.split('/').pop();
+            const originalFilename = originalUrl.split('/').pop();
+            if (srcFilename && originalFilename && srcFilename === originalFilename && localPath.includes('js/')) {
+              mappedPath = localPath;
+              console.log(`🔗 Mapped script by filename ${src} to ${localPath}`);
+              break;
+            }
+          }
+        }
+        
+        if (mappedPath) {
+          $(el).attr('src', './' + mappedPath);
+        } else {
+          console.log(`⚠️ Could not map script: ${src}`);
+        }
       }
     });
     
-    // Rewrite image sources
-    $('img[src]').each((_, el) => {
-      const src = $(el).attr('src');
-      if (src && urlMappings.has(src)) {
-        $(el).attr('src', './' + urlMappings.get(src));
+    // Rewrite image sources and favicons
+    $('img[src], link[rel*="icon"]').each((_, el) => {
+      const src = $(el).attr('src') || $(el).attr('href');
+      if (src) {
+        let mappedPath = null;
+        
+        // Try exact match first
+        if (urlMappings.has(src)) {
+          mappedPath = urlMappings.get(src);
+        } else {
+          // Try to find a mapping by checking if any URL ends with the same path
+          for (const [originalUrl, localPath] of urlMappings.entries()) {
+            if (src.startsWith('/') && originalUrl.endsWith(src)) {
+              mappedPath = localPath;
+              console.log(`🔗 Mapped absolute image path ${src} to ${localPath} via ${originalUrl}`);
+              break;
+            }
+            // Also try matching just the filename
+            const srcFilename = src.split('/').pop();
+            const originalFilename = originalUrl.split('/').pop();
+            if (srcFilename && originalFilename && srcFilename === originalFilename) {
+              mappedPath = localPath;
+              console.log(`🔗 Mapped image by filename ${src} to ${localPath}`);
+              break;
+            }
+          }
+        }
+        
+        if (mappedPath) {
+          if ($(el).attr('src')) {
+            $(el).attr('src', './' + mappedPath);
+          } else {
+            $(el).attr('href', './' + mappedPath);
+          }
+        } else {
+          console.log(`⚠️ Could not map image/icon: ${src}`);
+        }
       }
     });
     
-    // Rewrite favicon links
-    $('link[rel*="icon"]').each((_, el) => {
-      const href = $(el).attr('href');
-      if (href && urlMappings.has(href)) {
-        $(el).attr('href', './' + urlMappings.get(href));
-      }
-    });
+
     
     // Rewrite inline CSS
     $('style').each((_, el) => {

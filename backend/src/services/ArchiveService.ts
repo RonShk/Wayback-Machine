@@ -15,6 +15,8 @@ interface ArchiveMetadata {
   pageCount?: number;
   assetCount?: number;
   totalSize?: number;
+  version?: number;
+  originalUrl?: string; // For tracking the base URL across versions
 }
 
 export class ArchiveService {
@@ -26,16 +28,26 @@ export class ArchiveService {
   private archivesFile = path.join(process.cwd(), 'data', 'archives.json');
   private initialized = false;
 
-  async createArchive(url: string): Promise<{ id: string; status: string; message: string }> {
+  async createArchive(url: string, isReArchive: boolean = false): Promise<{ id: string; status: string; message: string }> {
     console.log('got to create archive')
     await this.ensureInitialized();
     
     const archiveId = this.generateId();
+    
+    // Determine version number
+    let version = 1;
+    if (isReArchive) {
+      const existingVersions = this.getArchiveVersions(url);
+      version = existingVersions.length > 0 ? Math.max(...existingVersions.map(a => a.version || 1)) + 1 : 1;
+    }
+    
     const metadata: ArchiveMetadata = {
       id: archiveId,
       url,
       status: 'processing',
       createdAt: new Date().toISOString(),
+      version,
+      originalUrl: url,
     };
     
     this.archives.set(archiveId, metadata);
@@ -150,7 +162,11 @@ export class ArchiveService {
 
   async getArchiveStatus(id: string): Promise<ArchiveMetadata | null> {
     await this.ensureInitialized();
-    return this.archives.get(id) || null;
+    const archive = this.archives.get(id);
+    if (!archive) {
+      console.log(`⚠️ Archive ${id} not found in memory. Available archives:`, Array.from(this.archives.keys()));
+    }
+    return archive || null;
   }
 
   async listArchives(): Promise<{ archives: ArchiveMetadata[]; total: number }> {
@@ -158,6 +174,31 @@ export class ArchiveService {
     return {
       archives: Array.from(this.archives.values()),
       total: this.archives.size
+    };
+  }
+
+  getArchiveVersions(url: string): ArchiveMetadata[] {
+    const versions = Array.from(this.archives.values())
+      .filter(archive => archive.originalUrl === url || archive.url === url)
+      .sort((a, b) => (b.version || 1) - (a.version || 1)); // Sort by version descending
+    return versions;
+  }
+
+  async getArchiveVersionsForUrl(url: string): Promise<{ versions: ArchiveMetadata[]; total: number }> {
+    await this.ensureInitialized();
+    const versions = this.getArchiveVersions(url);
+    return {
+      versions,
+      total: versions.length
+    };
+  }
+
+  async reArchiveUrl(url: string): Promise<{ id: string; status: string; message: string; version: number }> {
+    const result = await this.createArchive(url, true);
+    const archive = this.archives.get(result.id);
+    return {
+      ...result,
+      version: archive?.version || 1
     };
   }
 
@@ -197,6 +238,13 @@ export class ArchiveService {
   // Configuration methods
   setCrawlerLimits(maxDepth: number, maxPages: number): void {
     this.crawler.setLimits(maxDepth, maxPages);
+  }
+
+  // Force reload archives from file (useful for debugging)
+  async reloadArchives(): Promise<void> {
+    console.log('🔄 Force reloading archives from file...');
+    await this.loadArchives();
+    console.log(`📂 Reloaded ${this.archives.size} archives`);
   }
 }
 

@@ -3,7 +3,11 @@ import path from 'path';
 import { ArchiveService } from './ArchiveService.ts';
 
 export class ViewerService {
-  private archiveService = new ArchiveService();
+  private archiveService: ArchiveService;
+
+  constructor(archiveService?: ArchiveService) {
+    this.archiveService = archiveService || new ArchiveService();
+  }
 
   /**
    * Get the main HTML page for an archived website
@@ -42,13 +46,42 @@ export class ViewerService {
 
       const html = await fs.readFile(targetFile, 'utf8');
       
-      // Return the HTML as-is with proper base tag
+      // Return the HTML with base tag and error suppression
       const baseTag = `<base href="/api/archives/view/${archiveId}/">`;
+      const errorSuppressionScript = `
+<script>
+// Suppress chunk loading errors and other common archive errors
+(function() {
+  const originalError = console.error;
+  console.error = function(...args) {
+    const message = args.join(' ');
+    // Suppress common chunk loading and asset errors
+    if (message.includes('ChunkLoadError') || 
+        message.includes('Loading chunk') || 
+        message.includes('Failed to fetch') ||
+        message.includes('404') ||
+        message.includes('net::ERR_')) {
+      return; // Don't log these errors
+    }
+    originalError.apply(console, args);
+  };
+  
+  // Suppress unhandled promise rejections for chunk loading
+  window.addEventListener('unhandledrejection', function(event) {
+    if (event.reason && event.reason.message && 
+        (event.reason.message.includes('ChunkLoadError') || 
+         event.reason.message.includes('Loading chunk'))) {
+      event.preventDefault();
+    }
+  });
+})();
+</script>`;
+      
       let modifiedHtml = html;
       
-      // Add ONLY base tag after <head> to fix relative URLs
+      // Add base tag and error suppression after <head>
       if (modifiedHtml.includes('<head>')) {
-        modifiedHtml = modifiedHtml.replace('<head>', `<head>\n${baseTag}`);
+        modifiedHtml = modifiedHtml.replace('<head>', `<head>\n${baseTag}${errorSuppressionScript}`);
       }
 
       return {
@@ -86,6 +119,35 @@ export class ViewerService {
       try {
         await fs.access(assetFile);
       } catch {
+        // Log missing assets but don't spam the console
+        if (Math.random() < 0.01) { // Only log 1% of missing assets to avoid spam
+          console.log(`📄 Missing asset: ${assetPath} for archive ${archiveId}`);
+        }
+        
+        // Return a fallback for JavaScript files to prevent endless errors
+        if (assetPath.endsWith('.js')) {
+          return {
+            data: Buffer.from('// Missing JavaScript chunk - archived version not available\nconsole.warn("Missing JS chunk:", "' + assetPath + '");'),
+            contentType: 'application/javascript'
+          };
+        }
+        
+        // Return a fallback for CSS files
+        if (assetPath.endsWith('.css')) {
+          return {
+            data: Buffer.from('/* Missing CSS file - archived version not available */'),
+            contentType: 'text/css'
+          };
+        }
+        
+        // Return a fallback for 3D model files
+        if (assetPath.endsWith('.glb') || assetPath.endsWith('.gltf')) {
+          return {
+            data: Buffer.from(''), // Empty buffer for missing 3D models
+            contentType: 'model/gltf-binary'
+          };
+        }
+        
         return null;
       }
 
@@ -146,6 +208,14 @@ export class ViewerService {
       '.webm': 'video/webm',
       '.mp3': 'audio/mpeg',
       '.wav': 'audio/wav',
+      '.glb': 'model/gltf-binary',
+      '.gltf': 'model/gltf+json',
+      '.obj': 'text/plain',
+      '.fbx': 'application/octet-stream',
+      '.dae': 'model/vnd.collada+xml',
+      '.3ds': 'application/octet-stream',
+      '.ply': 'application/octet-stream',
+      '.stl': 'application/octet-stream',
     };
 
     return mimeTypes[ext] || 'application/octet-stream';
