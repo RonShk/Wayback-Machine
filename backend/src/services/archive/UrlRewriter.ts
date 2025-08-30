@@ -11,8 +11,11 @@ export class UrlRewriter {
   ): Promise<void> {
     const archiveDir = path.join(process.cwd(), 'archives', archiveId);
     
+    // Create page URL mappings for internal navigation
+    const pageUrlMappings = this.createPageUrlMappings(pagesData);
+    
     for (const page of pagesData) {
-      const rewrittenHtml = this.rewriteHtmlUrls(page.html, urlMappings);
+      const rewrittenHtml = this.rewriteHtmlUrls(page.html, urlMappings, pageUrlMappings);
       const filename = this.generatePageFilename(page.url);
       const filePath = path.join(archiveDir, 'pages', filename);
       
@@ -23,7 +26,25 @@ export class UrlRewriter {
     await this.rewriteCssFiles(urlMappings, archiveId);
   }
 
-  private rewriteHtmlUrls(html: string, urlMappings: Map<string, string>): string {
+  private createPageUrlMappings(pagesData: Array<{url: string, html: string}>): Map<string, string> {
+    const pageUrlMappings = new Map<string, string>();
+    
+    for (const page of pagesData) {
+      const filename = this.generatePageFilename(page.url);
+      pageUrlMappings.set(page.url, filename);
+      
+      // Also handle URLs with and without trailing slashes
+      const urlWithoutSlash = page.url.endsWith('/') ? page.url.slice(0, -1) : page.url;
+      const urlWithSlash = page.url.endsWith('/') ? page.url : page.url + '/';
+      
+      pageUrlMappings.set(urlWithoutSlash, filename);
+      pageUrlMappings.set(urlWithSlash, filename);
+    }
+    
+    return pageUrlMappings;
+  }
+
+  private rewriteHtmlUrls(html: string, urlMappings: Map<string, string>, pageUrlMappings?: Map<string, string>): string {
     const $ = cheerio.load(html);
     
     // Rewrite CSS links
@@ -66,6 +87,18 @@ export class UrlRewriter {
         $(el).html(rewrittenCss);
       }
     });
+    
+    // Rewrite internal page navigation links
+    if (pageUrlMappings) {
+      $('a[href]').each((_, el) => {
+        const href = $(el).attr('href');
+        if (href && pageUrlMappings.has(href)) {
+          const localPageFile = pageUrlMappings.get(href);
+          $(el).attr('href', './' + localPageFile);
+          console.log(`🔗 Rewritten page link: ${href} -> ./${localPageFile}`);
+        }
+      });
+    }
     
     return $.html();
   }

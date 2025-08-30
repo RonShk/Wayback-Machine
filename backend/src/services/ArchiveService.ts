@@ -144,6 +144,89 @@ export class ArchiveService {
     return Date.now().toString(36) + Math.random().toString(36).substr(2);
   }
 
+  async getArchiveSnapshot(id: string): Promise<{ html: string; baseUrl: string } | null> {
+    await this.ensureInitialized();
+    
+    const archive = this.archives.get(id);
+    if (!archive || archive.status !== 'completed') {
+      return null;
+    }
+    
+    try {
+      const archiveDir = path.join(process.cwd(), 'archives', id);
+      const pagesDir = path.join(archiveDir, 'pages');
+      
+      // Find the main page (usually index.html or the first page)
+      const pageFiles = await fs.readdir(pagesDir);
+      let mainPageFile = pageFiles.find(file => file === 'index.html') || pageFiles[0];
+      
+      if (!mainPageFile) {
+        throw new Error('No pages found in archive');
+      }
+      
+      const mainPagePath = path.join(pagesDir, mainPageFile);
+      const html = await fs.readFile(mainPagePath, 'utf8');
+      
+      return {
+        html,
+        baseUrl: `/api/archives/${id}/assets`
+      };
+    } catch (error) {
+      console.error(`Failed to get archive snapshot ${id}:`, error);
+      return null;
+    }
+  }
+
+  async getArchiveAsset(id: string, assetPath: string): Promise<{ content: Buffer; mimeType: string } | null> {
+    await this.ensureInitialized();
+    
+    const archive = this.archives.get(id);
+    if (!archive || archive.status !== 'completed') {
+      return null;
+    }
+    
+    try {
+      const archiveDir = path.join(process.cwd(), 'archives', id);
+      const fullAssetPath = path.join(archiveDir, 'assets', assetPath);
+      
+      // Security check: ensure the path is within the archive directory
+      if (!fullAssetPath.startsWith(archiveDir)) {
+        throw new Error('Invalid asset path');
+      }
+      
+      const content = await fs.readFile(fullAssetPath);
+      const mimeType = this.getMimeType(assetPath);
+      
+      return { content, mimeType };
+    } catch (error) {
+      console.error(`Failed to get archive asset ${id}/${assetPath}:`, error);
+      return null;
+    }
+  }
+
+  private getMimeType(filePath: string): string {
+    const ext = path.extname(filePath).toLowerCase();
+    const mimeTypes: { [key: string]: string } = {
+      '.html': 'text/html',
+      '.css': 'text/css',
+      '.js': 'application/javascript',
+      '.json': 'application/json',
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.svg': 'image/svg+xml',
+      '.webp': 'image/webp',
+      '.ico': 'image/x-icon',
+      '.woff': 'font/woff',
+      '.woff2': 'font/woff2',
+      '.ttf': 'font/ttf',
+      '.eot': 'application/vnd.ms-fontobject'
+    };
+    
+    return mimeTypes[ext] || 'application/octet-stream';
+  }
+
   // Configuration methods
   setCrawlerLimits(maxDepth: number, maxPages: number): void {
     this.crawler.setLimits(maxDepth, maxPages);

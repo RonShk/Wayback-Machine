@@ -9,8 +9,8 @@ export interface PageData {
 
 export class CrawlerService {
   private visitedUrls = new Set<string>();
-  private maxDepth = 3;
-  private maxPages = 50;
+  private maxDepth = 20;
+  private maxPages = 100;
 
   async crawlWebsite(startUrl: string): Promise<PageData[]> {
     this.visitedUrls.clear();
