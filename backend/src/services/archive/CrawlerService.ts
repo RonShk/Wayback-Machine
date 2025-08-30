@@ -9,10 +9,13 @@ export interface PageData {
 
 export class CrawlerService {
   private visitedUrls = new Set<string>();
-  private maxDepth = 20;
-  private maxPages = 100;
+  private maxDepth = 5;  // Reasonable default depth
+  private maxPages = 25; // Reasonable default page count
 
   async crawlWebsite(startUrl: string): Promise<PageData[]> {
+    console.log(`🕷️ Starting website crawl for: ${startUrl}`);
+    console.log(`⚙️ Crawler settings: maxDepth=${this.maxDepth}, maxPages=${this.maxPages}`);
+    
     this.visitedUrls.clear();
     const pagesData: PageData[] = [];
     const urlQueue = [{ url: startUrl, depth: 0 }];
@@ -24,8 +27,14 @@ export class CrawlerService {
         continue;
       }
       
+      console.log(`🔍 Crawling page ${pagesData.length + 1}/${this.maxPages}: ${url} (depth: ${depth})`);
+      
       try {
+        const pageStartTime = Date.now();
         const pageData = await this.crawlPage(url);
+        const pageDuration = Date.now() - pageStartTime;
+        console.log(`   ✅ Crawled in ${pageDuration}ms - found ${pageData.links.length} links`);
+        
         this.visitedUrls.add(url);
         pagesData.push(pageData); // Store the complete page data (HTML + links)
         

@@ -27,6 +27,7 @@ export class ArchiveService {
   private initialized = false;
 
   async createArchive(url: string): Promise<{ id: string; status: string; message: string }> {
+    console.log('got to create archive')
     await this.ensureInitialized();
     
     const archiveId = this.generateId();
@@ -50,6 +51,8 @@ export class ArchiveService {
         this.saveArchives();
       }
     });
+
+    console.log("got after processArchive")
     
     return {
       id: archiveId,
@@ -59,28 +62,58 @@ export class ArchiveService {
   }
 
   private async processArchive(archiveId: string, url: string): Promise<void> {
+    console.log("got into process archive")
+    const overallStartTime = Date.now();
+    
     try {
-      console.log(`🚀 Starting archive process for: ${url}`);
+      console.log(`\n🚀 [${new Date().toISOString()}] Starting archive process for: ${url}`);
+      console.log(`📋 Archive ID: ${archiveId}`);
       
       // Step 1: Crawl website once to get ALL page data (URLs + HTML + links)
-      console.log(`🔍 Crawling website (single pass)...`);
+      const crawlStartTime = Date.now();
+      console.log(`\n🔍 Step 1: Crawling website (single pass)...`);
       const pagesData = await this.crawler.crawlWebsite(url);
-      console.log(`Crawled ${pagesData.length} pages with complete data`);
+      console.log("got passed crawling website")
+      const crawlDuration = Date.now() - crawlStartTime;
+      console.log(`✅ Crawled ${pagesData.length} pages in ${crawlDuration}ms`);
+      
+      // Log page details
+      pagesData.forEach((page, i) => {
+        console.log(`   📄 Page ${i + 1}: ${page.url} (${page.html.length} chars, ${page.links.length} links)`);
+      });
       
       // Step 2: Extract all assets from the crawled pages
-      console.log(`🔧 Extracting assets...`);
+      const extractStartTime = Date.now();
+      console.log(`\n🔧 Step 2: Extracting assets from ${pagesData.length} pages...`);
       const assets = await this.extractor.extractAssetsFromPages(pagesData);
-      console.log(`Found ${assets.length} assets to download`);
+      const extractDuration = Date.now() - extractStartTime;
+      console.log(`✅ Found ${assets.length} assets in ${extractDuration}ms`);
+      
+      // Log asset types
+      const assetTypes = assets.reduce((acc, asset) => {
+        const type = asset.type || 'unknown';
+        acc[type] = (acc[type] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+      console.log(`   📊 Asset breakdown:`, assetTypes);
       
       // Step 3: Download all assets
-      console.log(`⬇️ Downloading assets...`);
+      const downloadStartTime = Date.now();
+      console.log(`\n⬇️ Step 3: Downloading ${assets.length} assets...`);
       const urlMappings = await this.downloader.downloadAssets(assets, archiveId);
+      const downloadDuration = Date.now() - downloadStartTime;
+      console.log(`✅ Downloaded assets in ${downloadDuration}ms`);
+      console.log(`   📁 Created ${urlMappings.size} URL mappings`);
       
       // Step 4: Rewrite URLs in HTML and CSS files
-      console.log(`✏️ Rewriting URLs...`);
+      const rewriteStartTime = Date.now();
+      console.log(`\n✏️ Step 4: Rewriting URLs in ${pagesData.length} pages...`);
       await this.rewriter.rewriteUrls(pagesData, urlMappings, archiveId);
+      const rewriteDuration = Date.now() - rewriteStartTime;
+      console.log(`✅ URL rewriting completed in ${rewriteDuration}ms`);
       
       // Step 5: Save metadata and mark as completed
+      console.log(`\n💾 Step 5: Saving archive metadata...`);
       const archive = this.archives.get(archiveId);
       if (archive) {
         archive.status = 'completed';
@@ -90,10 +123,27 @@ export class ArchiveService {
         await this.saveArchives();
       }
       
-      console.log(`✅ Archive ${archiveId} completed successfully`);
+      const totalDuration = Date.now() - overallStartTime;
+      console.log(`\n🎉 Archive ${archiveId} completed successfully!`);
+      console.log(`⏱️ Total time: ${totalDuration}ms (${Math.round(totalDuration/1000)}s)`);
+      console.log(`📊 Performance breakdown:`);
+      console.log(`   🔍 Crawling: ${crawlDuration}ms (${Math.round(crawlDuration/totalDuration*100)}%)`);
+      console.log(`   🔧 Asset extraction: ${extractDuration}ms (${Math.round(extractDuration/totalDuration*100)}%)`);
+      console.log(`   ⬇️ Asset download: ${downloadDuration}ms (${Math.round(downloadDuration/totalDuration*100)}%)`);
+      console.log(`   ✏️ URL rewriting: ${rewriteDuration}ms (${Math.round(rewriteDuration/totalDuration*100)}%)`);
       
     } catch (error) {
-      console.error(`❌ Archive ${archiveId} failed:`, error);
+      const totalDuration = Date.now() - overallStartTime;
+      console.error(`\n❌ Archive ${archiveId} failed after ${totalDuration}ms:`, error);
+      
+      // Update archive status to failed
+      const archive = this.archives.get(archiveId);
+      if (archive) {
+        archive.status = 'failed';
+        archive.error = error instanceof Error ? error.message : 'Unknown error';
+        await this.saveArchives();
+      }
+      
       throw error;
     }
   }
@@ -144,91 +194,69 @@ export class ArchiveService {
     return Date.now().toString(36) + Math.random().toString(36).substr(2);
   }
 
-  async getArchiveSnapshot(id: string): Promise<{ html: string; baseUrl: string } | null> {
-    await this.ensureInitialized();
-    
-    const archive = this.archives.get(id);
-    if (!archive || archive.status !== 'completed') {
-      return null;
-    }
-    
-    try {
-      const archiveDir = path.join(process.cwd(), 'archives', id);
-      const pagesDir = path.join(archiveDir, 'pages');
-      
-      // Find the main page (usually index.html or the first page)
-      const pageFiles = await fs.readdir(pagesDir);
-      let mainPageFile = pageFiles.find(file => file === 'index.html') || pageFiles[0];
-      
-      if (!mainPageFile) {
-        throw new Error('No pages found in archive');
-      }
-      
-      const mainPagePath = path.join(pagesDir, mainPageFile);
-      const html = await fs.readFile(mainPagePath, 'utf8');
-      
-      return {
-        html,
-        baseUrl: `/api/archives/${id}/assets`
-      };
-    } catch (error) {
-      console.error(`Failed to get archive snapshot ${id}:`, error);
-      return null;
-    }
-  }
-
-  async getArchiveAsset(id: string, assetPath: string): Promise<{ content: Buffer; mimeType: string } | null> {
-    await this.ensureInitialized();
-    
-    const archive = this.archives.get(id);
-    if (!archive || archive.status !== 'completed') {
-      return null;
-    }
-    
-    try {
-      const archiveDir = path.join(process.cwd(), 'archives', id);
-      const fullAssetPath = path.join(archiveDir, 'assets', assetPath);
-      
-      // Security check: ensure the path is within the archive directory
-      if (!fullAssetPath.startsWith(archiveDir)) {
-        throw new Error('Invalid asset path');
-      }
-      
-      const content = await fs.readFile(fullAssetPath);
-      const mimeType = this.getMimeType(assetPath);
-      
-      return { content, mimeType };
-    } catch (error) {
-      console.error(`Failed to get archive asset ${id}/${assetPath}:`, error);
-      return null;
-    }
-  }
-
-  private getMimeType(filePath: string): string {
-    const ext = path.extname(filePath).toLowerCase();
-    const mimeTypes: { [key: string]: string } = {
-      '.html': 'text/html',
-      '.css': 'text/css',
-      '.js': 'application/javascript',
-      '.json': 'application/json',
-      '.png': 'image/png',
-      '.jpg': 'image/jpeg',
-      '.jpeg': 'image/jpeg',
-      '.gif': 'image/gif',
-      '.svg': 'image/svg+xml',
-      '.webp': 'image/webp',
-      '.ico': 'image/x-icon',
-      '.woff': 'font/woff',
-      '.woff2': 'font/woff2',
-      '.ttf': 'font/ttf',
-      '.eot': 'application/vnd.ms-fontobject'
-    };
-    
-    return mimeTypes[ext] || 'application/octet-stream';
-  }
-
   // Configuration methods
   setCrawlerLimits(maxDepth: number, maxPages: number): void {
     this.crawler.setLimits(maxDepth, maxPages);
   }
+}
+
+// Main function for direct testing
+async function main() {
+  console.log('🧪 Testing ArchiveService directly...');
+  
+  const archiveService = new ArchiveService();
+  
+  // Set the same limits as the working KD test
+  archiveService.setCrawlerLimits(5, 25);
+  
+  const testUrl = 'https://ondemand.kdcollegeprep.com/';
+  console.log(`📝 Testing with URL: ${testUrl}`);
+
+  try {
+    const result = await archiveService.createArchive(testUrl);
+    console.log(`✅ Archive creation result:`, result);
+    
+    // Wait for the archive to complete
+    console.log('⏳ Waiting for archive to complete...');
+    let attempts = 0;
+    const maxAttempts = 120; // 2 minutes
+    
+    while (attempts < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      const status = await archiveService.getArchiveStatus(result.id);
+      attempts++;
+      
+      if (status?.status === 'completed') {
+        console.log(`🎉 Archive completed successfully in ${attempts} seconds!`);
+        console.log(`📋 Final status:`, status);
+        break;
+      } else if (status?.status === 'failed') {
+        console.log(`❌ Archive failed:`, status.error);
+        break;
+      }
+      
+      if (attempts % 10 === 0) {
+        console.log(`⏰ Still processing... (${attempts}s elapsed)`);
+      }
+    }
+    
+    if (attempts >= maxAttempts) {
+      console.log(`⏰ Timeout after ${maxAttempts} seconds`);
+    }
+    
+  } catch (error) {
+    console.error('❌ Test failed:', error);
+  }
+  
+  process.exit(0);
+}
+
+// Run main function if this file is executed directly
+if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
+  main().catch(console.error);
+}
+
+// Alternative: always run main if this is the entry point
+if (process.argv[1]?.endsWith('ArchiveService.ts')) {
+  main().catch(console.error);
 }

@@ -1,0 +1,13 @@
+{
+  "watch": [
+    "src"
+  ],
+  "ext": "ts,js,json",
+  "ignore": [
+    "archives/**/*",
+    "data/**/*",
+    "node_modules/**/*",
+    "dist/**/*"
+  ],
+  "exec": "node --loader ts-node/esm src/index.ts"
+}

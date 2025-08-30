@@ -18,8 +18,29 @@ export default function Navbar() {
             <span className="text-xl font-semibold text-gray-900">WebArchive</span>
           </NavLink>
 
-          {/* Empty space on the right */}
-          <div />
+          {/* Navigation Links */}
+          <div className="flex items-center space-x-6">
+            <NavLink
+              to="/"
+              className={({ isActive }) =>
+                `text-sm font-medium transition-colors ${
+                  isActive ? 'text-blue-600' : 'text-gray-700 hover:text-blue-600'
+                }`
+              }
+            >
+              Home
+            </NavLink>
+            <NavLink
+              to="/search"
+              className={({ isActive }) =>
+                `text-sm font-medium transition-colors ${
+                  isActive ? 'text-blue-600' : 'text-gray-700 hover:text-blue-600'
+                }`
+              }
+            >
+              Archives
+            </NavLink>
+          </div>
         </div>
       </div>
     </nav>

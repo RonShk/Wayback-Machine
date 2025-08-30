@@ -23,7 +23,7 @@ app.get('/', (req, res) => {
     message: 'WebArchive API is running!',
     version: '1.0.0',
     endpoints: {
-      archive: '/api/archive'
+      archives: '/api/archives'
     }
   });
 });
@@ -31,8 +31,8 @@ app.get('/', (req, res) => {
 // Start server
 app.listen(PORT, () => {
   console.log(`🚀 WebArchive API server running on http://localhost:${PORT}`);
-  console.log(`📦 Archive URL: http://localhost:${PORT}/api/archive/url`);
-  console.log(`📋 List archives: http://localhost:${PORT}/api/archive/list`);
+  console.log(`📦 Archive URL: http://localhost:${PORT}/api/archives/url`);
+  console.log(`📋 List archives: http://localhost:${PORT}/api/archives/list`);
 });
 
 export default app;

@@ -5,6 +5,9 @@ import { Asset } from './AssetExtractor.ts';
 export class AssetDownloader {
   
   async downloadAssets(assets: Asset[], archiveId: string): Promise<Map<string, string>> {
+    console.log(`📥 Starting download of ${assets.length} assets for archive ${archiveId}`);
+    const downloadStartTime = Date.now();
+    
     const urlMappings = new Map<string, string>();
     const archiveDir = path.join(process.cwd(), 'archives', archiveId);
     
@@ -25,7 +28,9 @@ export class AssetDownloader {
         urlMappings.set(asset.url, relativePath);
         
         successCount++;
-        console.log(`✅ Downloaded: ${asset.url} -> ${relativePath}`);
+        if (successCount % 10 === 0) {
+          console.log(`📥 Downloaded ${successCount}/${assets.length} assets...`);
+        }
       } catch (error: any) {
         failedCount++;
         failedAssets.push(asset.url);
@@ -41,9 +46,11 @@ export class AssetDownloader {
     }
     
     // Summary report
-    console.log(`\n📊 Download Summary:`);
+    const downloadDuration = Date.now() - downloadStartTime;
+    console.log(`\n📊 Download Summary (${downloadDuration}ms):`);
     console.log(`   ✅ Successfully downloaded: ${successCount}/${assets.length} assets`);
     console.log(`   ❌ Failed downloads: ${failedCount}/${assets.length} assets`);
+    console.log(`   ⚡ Average download time: ${Math.round(downloadDuration / assets.length)}ms per asset`);
     
     if (failedCount > 0) {
       const criticalFailures = failedAssets.filter(url => 
