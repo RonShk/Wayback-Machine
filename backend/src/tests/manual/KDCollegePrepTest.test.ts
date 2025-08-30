@@ -8,16 +8,16 @@ describe('KD College Prep Website Test', () => {
   beforeEach(() => {
     crawlerService = new CrawlerService();
     archiveService = new ArchiveService();
-    // Set conservative limits for testing
-    crawlerService.setLimits(1, 3);
-    archiveService.setCrawlerLimits(1, 3);
+    // Set limits for deep crawling: 10 levels deep, 100 pages max
+    crawlerService.setLimits(10, 100);      // For direct crawler tests
+    archiveService.setCrawlerLimits(10, 100); // For archive process
   });
 
   it('should crawl https://ondemand.kdcollegeprep.com/ and show detailed results', async () => {
     const testUrl = 'https://ondemand.kdcollegeprep.com/';
     
     console.log(`\n🎓 Testing KD College Prep website: ${testUrl}`);
-    console.log(`📊 Crawler limits: depth=1, maxPages=3`);
+    console.log(`📊 Crawler limits: depth=10, maxPages=100`);
     
     try {
       console.log(`\n🔍 Step 1: Testing single page crawl...`);
