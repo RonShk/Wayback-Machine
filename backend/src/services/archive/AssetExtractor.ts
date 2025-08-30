@@ -32,11 +32,18 @@ export class AssetExtractor {
     $('link[rel="stylesheet"]').each((_, el) => {
       const href = $(el).attr('href');
       if (href) {
+        const resolvedUrl = this.resolveUrl(baseUrl, href);
+        console.log(`🎨 Found CSS: ${resolvedUrl}`);
         assets.push({
-          url: this.resolveUrl(baseUrl, href),
+          url: resolvedUrl,
           type: 'css',
           foundOn: baseUrl
         });
+        
+        // If this is a Google Fonts or external font CSS, mark it for special handling
+        if (href.includes('fonts.googleapis.com') || href.includes('fonts.gstatic.com')) {
+          console.log(`🔤 Found external font CSS: ${resolvedUrl}`);
+        }
       }
     });
 

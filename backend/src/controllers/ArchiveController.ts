@@ -11,7 +11,7 @@ export class ArchiveController {
     this.viewerService = new ViewerService();
     
     // Set crawler limits to match the working direct test
-    this.archiveService.setCrawlerLimits(5, 25); // depth=5, maxPages=25 (same as direct test)
+    this.archiveService.setCrawlerLimits(100, 100); // depth=5, maxPages=25 (same as direct test)
     console.log('🎛️ ArchiveController initialized with crawler limits: depth=5, maxPages=25');
   }
 
@@ -72,10 +72,13 @@ export class ArchiveController {
   // Viewer endpoints
   viewArchive = async (req: Request, res: Response): Promise<void> => {
     try {
-      const { id } = req.params;
-      const { page } = req.query;
+      const { id, page: urlPage } = req.params;
+      const { page: queryPage } = req.query;
       
-      const result = await this.viewerService.getArchivedPage(id, page as string);
+      // Use page from URL path if available, otherwise use query parameter
+      const pagePath = urlPage || queryPage as string;
+      
+      const result = await this.viewerService.getArchivedPage(id, pagePath);
       
       if (!result) {
         res.status(404).json({ error: 'Archive or page not found' });
@@ -92,13 +95,30 @@ export class ArchiveController {
 
   getArchiveAsset = async (req: Request, res: Response): Promise<void> => {
     try {
-      const { id, folder, file } = req.params;
-      // Handle both /assets/:file and /assets/:folder/:file patterns
-      const assetPath = folder ? `${folder}/${file}` : file;
+      const { id, folder, subfolder, file } = req.params;
+      
+      // Build the asset path based on available parameters
+      let assetPath: string;
+      if (subfolder && file) {
+        // Handle deeply nested paths: /assets/folder/subfolder/file
+        assetPath = `${folder}/${subfolder}/${file}`;
+      } else if (folder && file) {
+        // Handle nested paths: /assets/folder/file
+        assetPath = `${folder}/${file}`;
+      } else if (folder) {
+        // Handle direct file access: /assets/file (where folder is actually the file)
+        assetPath = folder;
+      } else {
+        res.status(400).json({ error: 'Invalid asset path' });
+        return;
+      }
+      
+      console.log(`🎯 Serving asset: ${assetPath} for archive ${id}`);
       
       const result = await this.viewerService.getArchivedAsset(id, assetPath);
       
       if (!result) {
+        console.log(`❌ Asset not found: ${assetPath}`);
         res.status(404).json({ error: 'Asset not found' });
         return;
       }

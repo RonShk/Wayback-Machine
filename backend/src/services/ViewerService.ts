@@ -42,8 +42,14 @@ export class ViewerService {
 
       const html = await fs.readFile(targetFile, 'utf8');
       
-      // Inject base tag and viewer scripts to handle navigation
-      const modifiedHtml = this.injectViewerEnhancements(html, archiveId);
+      // Return the HTML as-is with proper base tag
+      const baseTag = `<base href="/api/archives/view/${archiveId}/">`;
+      let modifiedHtml = html;
+      
+      // Add ONLY base tag after <head> to fix relative URLs
+      if (modifiedHtml.includes('<head>')) {
+        modifiedHtml = modifiedHtml.replace('<head>', `<head>\n${baseTag}`);
+      }
 
       return {
         html: modifiedHtml,
@@ -111,52 +117,6 @@ export class ViewerService {
       console.error('Failed to list archive pages:', error);
       return null;
     }
-  }
-
-  /**
-   * Inject viewer enhancements into the HTML
-   */
-  private injectViewerEnhancements(html: string, archiveId: string): string {
-    // Add base tag to ensure relative URLs work correctly for assets
-    const baseTag = `<base href="/api/archives/view/${archiveId}/assets/">`;
-    
-    // Add viewer notification banner
-    const viewerBanner = `
-      <div style="
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        background: #1f2937;
-        color: white;
-        padding: 8px 16px;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        font-size: 14px;
-        z-index: 10000;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-      ">
-        📸 Archived Snapshot • 
-        <a href="/search" style="color: #60a5fa; text-decoration: none;" target="_parent">← Back to Archives</a>
-      </div>
-      <div style="height: 40px;"></div>
-    `;
-
-    // Inject the enhancements into the HTML
-    let modifiedHtml = html;
-    
-    // Add base tag after <head>
-    if (modifiedHtml.includes('<head>')) {
-      modifiedHtml = modifiedHtml.replace('<head>', `<head>\n${baseTag}`);
-    }
-    
-    // Add banner after <body>
-    if (modifiedHtml.includes('<body>')) {
-      modifiedHtml = modifiedHtml.replace('<body>', `<body>\n${viewerBanner}`);
-    } else if (modifiedHtml.includes('<body ')) {
-      modifiedHtml = modifiedHtml.replace(/(<body[^>]*>)/, `$1\n${viewerBanner}`);
-    }
-
-    return modifiedHtml;
   }
 
   /**

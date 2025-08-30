@@ -50,8 +50,15 @@ export class UrlRewriter {
     // Rewrite CSS links
     $('link[rel="stylesheet"]').each((_, el) => {
       const href = $(el).attr('href');
-      if (href && urlMappings.has(href)) {
-        $(el).attr('href', './' + urlMappings.get(href));
+      if (href) {
+        if (urlMappings.has(href)) {
+          $(el).attr('href', './' + urlMappings.get(href));
+        } else if (href.includes('fonts.googleapis.com') || href.includes('fonts.gstatic.com')) {
+          // For external font URLs that couldn't be downloaded, remove them
+          // The fallback fonts in ViewerService will handle this
+          console.log(`🔤 Removing external font link: ${href}`);
+          $(el).remove();
+        }
       }
     });
     

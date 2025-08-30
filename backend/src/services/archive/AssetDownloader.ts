@@ -6,6 +6,14 @@ export class AssetDownloader {
   
   async downloadAssets(assets: Asset[], archiveId: string): Promise<Map<string, string>> {
     console.log(`📥 Starting download of ${assets.length} assets for archive ${archiveId}`);
+    
+    // Log all CSS assets being downloaded
+    const cssAssets = assets.filter(asset => asset.type === 'css');
+    console.log(`🎨 CSS Assets to download (${cssAssets.length}):`);
+    cssAssets.forEach((asset, i) => {
+      console.log(`   ${i + 1}. ${asset.url}`);
+    });
+    
     const downloadStartTime = Date.now();
     
     const urlMappings = new Map<string, string>();
@@ -51,6 +59,15 @@ export class AssetDownloader {
     console.log(`   ✅ Successfully downloaded: ${successCount}/${assets.length} assets`);
     console.log(`   ❌ Failed downloads: ${failedCount}/${assets.length} assets`);
     console.log(`   ⚡ Average download time: ${Math.round(downloadDuration / assets.length)}ms per asset`);
+    
+    // Log CSS mappings specifically
+    const cssUrlMappings = Array.from(urlMappings.entries()).filter(([url]) => 
+      cssAssets.some(asset => asset.url === url)
+    );
+    console.log(`\n🎨 CSS URL Mappings (${cssUrlMappings.length}):`);
+    cssUrlMappings.forEach(([originalUrl, localPath]) => {
+      console.log(`   ${originalUrl} -> ${localPath}`);
+    });
     
     if (failedCount > 0) {
       const criticalFailures = failedAssets.filter(url => 
@@ -100,7 +117,16 @@ export class AssetDownloader {
 
   private generateLocalPath(originalUrl: string, type: Asset['type'], archiveDir: string): string {
     const urlObj = new URL(originalUrl);
-    const filename = path.basename(urlObj.pathname) || 'index';
+    let filename = path.basename(urlObj.pathname) || 'index';
+    
+    // Handle duplicate filenames by including part of the path or query params
+    if (filename === 'style.css' || filename === 'index.css' || filename === 'main.css') {
+      // Create a unique filename using URL hash to avoid conflicts
+      const urlHash = this.createUrlHash(originalUrl);
+      const nameWithoutExt = path.parse(filename).name;
+      const ext = path.parse(filename).ext || '.css';
+      filename = `${nameWithoutExt}-${urlHash}${ext}`;
+    }
     
     // Ensure filename has proper extension
     const finalFilename = this.ensureExtension(filename, type);
@@ -109,6 +135,17 @@ export class AssetDownloader {
     const subdir = this.getSubdirectory(type);
     
     return path.join(archiveDir, 'assets', subdir, finalFilename);
+  }
+
+  private createUrlHash(url: string): string {
+    // Create a short hash from the full URL to ensure uniqueness
+    let hash = 0;
+    for (let i = 0; i < url.length; i++) {
+      const char = url.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32bit integer
+    }
+    return Math.abs(hash).toString(36).substring(0, 6);
   }
 
   private ensureExtension(filename: string, type: Asset['type']): string {
