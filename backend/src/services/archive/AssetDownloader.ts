@@ -6,13 +6,18 @@ export class AssetDownloader {
   
   async downloadAssets(assets: Asset[], archiveId: string): Promise<Map<string, string>> {
     console.log(`📥 Starting download of ${assets.length} assets for archive ${archiveId}`);
+    
+    // Log all CSS assets being downloaded
+    const cssAssets = assets.filter(asset => asset.type === 'css');
+    console.log(`🎨 CSS Assets to download (${cssAssets.length}):`);
+    cssAssets.forEach((asset, i) => {
+      console.log(`   ${i + 1}. ${asset.url}`);
+    });
+    
     const downloadStartTime = Date.now();
     
     const urlMappings = new Map<string, string>();
     const archiveDir = path.join(process.cwd(), 'archives', archiveId);
-    
-    // Create directory structure
-    await this.createDirectoryStructure(archiveDir);
     
     let successCount = 0;
     let failedCount = 0;
@@ -20,10 +25,28 @@ export class AssetDownloader {
     
     for (const asset of assets) {
       try {
-        const localPath = this.generateLocalPath(asset.url, asset.type, archiveDir);
+        // First, check if the URL exists to avoid unnecessary 404s
+        const exists = await this.checkUrlExists(asset.url);
+        if (!exists) {
+          failedCount++;
+          failedAssets.push(asset.url);
+          
+          // Only log missing important assets
+          const isImportantAsset = asset.type === 'css' || asset.type === 'js';
+          if (isImportantAsset && Math.random() < 0.1) { // Log 10% of missing important assets
+            console.log(`⚠️ Asset does not exist: ${asset.url}`);
+          }
+          continue;
+        }
+        
+        const localPath = this.generateLocalPathPreservingStructure(asset.url, archiveDir);
+        
+        // Ensure directory exists
+        await fs.mkdir(path.dirname(localPath), { recursive: true });
+        
         await this.downloadFile(asset.url, localPath);
         
-        // Store relative path for URL rewriting
+        // Store relative path for URL rewriting (relative to archive root)
         const relativePath = path.relative(archiveDir, localPath);
         urlMappings.set(asset.url, relativePath);
         
@@ -52,6 +75,15 @@ export class AssetDownloader {
     console.log(`   ❌ Failed downloads: ${failedCount}/${assets.length} assets`);
     console.log(`   ⚡ Average download time: ${Math.round(downloadDuration / assets.length)}ms per asset`);
     
+    // Log CSS mappings specifically
+    const cssUrlMappings = Array.from(urlMappings.entries()).filter(([url]) => 
+      cssAssets.some(asset => asset.url === url)
+    );
+    console.log(`\n🎨 CSS URL Mappings (${cssUrlMappings.length}):`);
+    cssUrlMappings.forEach(([originalUrl, localPath]) => {
+      console.log(`   ${originalUrl} -> ${localPath}`);
+    });
+    
     if (failedCount > 0) {
       const criticalFailures = failedAssets.filter(url => 
         assets.find(a => a.url === url)?.type === 'css' || 
@@ -72,23 +104,92 @@ export class AssetDownloader {
     return urlMappings;
   }
 
-  private async createDirectoryStructure(archiveDir: string): Promise<void> {
-    const dirs = [
-      path.join(archiveDir, 'pages'),
-      path.join(archiveDir, 'assets', 'css'),
-      path.join(archiveDir, 'assets', 'js'),
-      path.join(archiveDir, 'assets', 'images'),
-      path.join(archiveDir, 'assets', 'fonts'),
-      path.join(archiveDir, 'assets', 'other')
-    ];
+  /**
+   * Generate local path preserving the original URL structure
+   */
+  private generateLocalPathPreservingStructure(originalUrl: string, archiveDir: string): string {
+    const urlObj = new URL(originalUrl);
+    let urlPath = urlObj.pathname;
     
-    for (const dir of dirs) {
-      await fs.mkdir(dir, { recursive: true });
+    // Remove leading slash
+    if (urlPath.startsWith('/')) {
+      urlPath = urlPath.substring(1);
+    }
+    
+    // Handle empty path (root level files)
+    if (!urlPath) {
+      urlPath = 'index';
+    }
+    
+    // Handle query parameters by creating a unique filename
+    if (urlObj.search) {
+      const queryHash = this.createUrlHash(originalUrl);
+      const pathParts = urlPath.split('/');
+      const filename = pathParts.pop() || 'file';
+      const nameWithoutExt = path.parse(filename).name;
+      const ext = path.parse(filename).ext || this.getDefaultExtension(originalUrl);
+      pathParts.push(`${nameWithoutExt}-${queryHash}${ext}`);
+      urlPath = pathParts.join('/');
+    }
+    
+    // Ensure file has an extension
+    if (!path.extname(urlPath)) {
+      urlPath += this.getDefaultExtension(originalUrl);
+    }
+    
+    return path.join(archiveDir, urlPath);
+  }
+  
+  /**
+   * Get default extension based on URL or content type
+   */
+  private getDefaultExtension(url: string): string {
+    if (url.includes('css') || url.includes('stylesheet')) return '.css';
+    if (url.includes('js') || url.includes('javascript')) return '.js';
+    if (url.includes('png')) return '.png';
+    if (url.includes('jpg') || url.includes('jpeg')) return '.jpg';
+    if (url.includes('gif')) return '.gif';
+    if (url.includes('svg')) return '.svg';
+    if (url.includes('woff')) return '.woff';
+    if (url.includes('woff2')) return '.woff2';
+    if (url.includes('ttf')) return '.ttf';
+    return '.bin'; // fallback
+  }
+
+  /**
+   * Check if a URL exists without downloading the full content
+   */
+  private async checkUrlExists(url: string): Promise<boolean> {
+    try {
+      const response = await fetch(url, { 
+        method: 'HEAD',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+      });
+      return response.ok;
+    } catch {
+      // If HEAD fails, try GET with a small range to minimize data transfer
+      try {
+        const response = await fetch(url, {
+          headers: {
+            'Range': 'bytes=0-0',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+          }
+        });
+        return response.ok || response.status === 206; // 206 = Partial Content
+      } catch {
+        return false;
+      }
     }
   }
 
   private async downloadFile(url: string, localPath: string): Promise<void> {
-    const response = await fetch(url);
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      }
+    });
     
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -100,7 +201,16 @@ export class AssetDownloader {
 
   private generateLocalPath(originalUrl: string, type: Asset['type'], archiveDir: string): string {
     const urlObj = new URL(originalUrl);
-    const filename = path.basename(urlObj.pathname) || 'index';
+    let filename = path.basename(urlObj.pathname) || 'index';
+    
+    // Handle duplicate filenames by including part of the path or query params
+    if (filename === 'style.css' || filename === 'index.css' || filename === 'main.css') {
+      // Create a unique filename using URL hash to avoid conflicts
+      const urlHash = this.createUrlHash(originalUrl);
+      const nameWithoutExt = path.parse(filename).name;
+      const ext = path.parse(filename).ext || '.css';
+      filename = `${nameWithoutExt}-${urlHash}${ext}`;
+    }
     
     // Ensure filename has proper extension
     const finalFilename = this.ensureExtension(filename, type);
@@ -109,6 +219,17 @@ export class AssetDownloader {
     const subdir = this.getSubdirectory(type);
     
     return path.join(archiveDir, 'assets', subdir, finalFilename);
+  }
+
+  private createUrlHash(url: string): string {
+    // Create a short hash from the full URL to ensure uniqueness
+    let hash = 0;
+    for (let i = 0; i < url.length; i++) {
+      const char = url.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32bit integer
+    }
+    return Math.abs(hash).toString(36).substring(0, 6);
   }
 
   private ensureExtension(filename: string, type: Asset['type']): string {
@@ -121,6 +242,7 @@ export class AssetDownloader {
       js: '.js',
       image: '.png',
       font: '.woff2',
+      model: '.glb',
       other: '.bin'
     };
     
@@ -133,32 +255,51 @@ export class AssetDownloader {
       js: 'js',
       image: 'images',
       font: 'fonts',
+      model: 'models',
       other: 'other'
     };
     
     return subdirs[type];
   }
 
-  async savePageContent(url: string, html: string, archiveId: string): Promise<string> {
+  async savePageContent(url: string, html: string, archiveId: string, pagePath?: string): Promise<string> {
     const archiveDir = path.join(process.cwd(), 'archives', archiveId);
-    const pagesDir = path.join(archiveDir, 'pages');
     
-    // Generate filename from URL
-    const filename = this.generatePageFilename(url);
-    const filePath = path.join(pagesDir, filename);
+    // Use provided path or generate from URL
+    const relativePath = pagePath || this.generatePagePath(url);
+    const filePath = path.join(archiveDir, relativePath);
+    
+    // Ensure directory exists
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
     
     await fs.writeFile(filePath, html, 'utf8');
-    return path.relative(archiveDir, filePath);
+    return relativePath;
   }
 
-  private generatePageFilename(url: string): string {
+  private generatePagePath(url: string): string {
     const urlObj = new URL(url);
-    let filename = urlObj.pathname.replace(/\//g, '_');
+    let urlPath = urlObj.pathname;
     
-    if (!filename || filename === '_') {
-      filename = 'index';
+    // Handle root path
+    if (urlPath === '/' || urlPath === '') {
+      return 'index.html';
     }
     
-    return filename.endsWith('.html') ? filename : `${filename}.html`;
+    // Remove leading slash
+    if (urlPath.startsWith('/')) {
+      urlPath = urlPath.substring(1);
+    }
+    
+    // If path ends with slash, add index.html
+    if (urlPath.endsWith('/')) {
+      urlPath += 'index.html';
+    }
+    
+    // If path doesn't have an extension, add .html
+    if (!path.extname(urlPath)) {
+      urlPath += '.html';
+    }
+    
+    return urlPath;
   }
 }
