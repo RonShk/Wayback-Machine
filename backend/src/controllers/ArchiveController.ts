@@ -93,36 +93,53 @@ export class ArchiveController {
     }
   };
 
-  getArchiveAsset = async (req: Request, res: Response): Promise<void> => {
+  getArchivedResource = async (req: Request, res: Response): Promise<void> => {
     try {
-      const { id, folder, subfolder, file } = req.params;
+      const { id } = req.params;
       
-      // Build the asset path based on available parameters
-      let assetPath: string;
-      if (subfolder && file) {
-        // Handle deeply nested paths: /assets/folder/subfolder/file
-        assetPath = `${folder}/${subfolder}/${file}`;
-      } else if (folder && file) {
-        // Handle nested paths: /assets/folder/file
-        assetPath = `${folder}/${file}`;
-      } else if (folder) {
-        // Handle direct file access: /assets/file (where folder is actually the file)
-        assetPath = folder;
+      // Extract the resource path from the URL
+      const fullPath = req.originalUrl || req.url;
+      const viewPrefix = `/api/archives/view/${id}/`;
+      let resourcePath = '';
+      
+      if (fullPath.startsWith(viewPrefix)) {
+        resourcePath = fullPath.substring(viewPrefix.length);
       } else {
-        res.status(400).json({ error: 'Invalid asset path' });
+        // Fallback: try to extract from path
+        const pathParts = req.path.split('/');
+        const viewIndex = pathParts.findIndex(part => part === 'view');
+        if (viewIndex >= 0 && pathParts[viewIndex + 2]) {
+          resourcePath = pathParts.slice(viewIndex + 2).join('/');
+        }
+      }
+      
+      // Handle empty path
+      if (!resourcePath) {
+        res.status(400).json({ error: 'Invalid resource path' });
         return;
       }
       
-      // Only log asset requests occasionally to avoid spam
-      if (Math.random() < 0.05) { // Log 5% of asset requests
-        console.log(`🎯 Serving asset: ${assetPath} for archive ${id}`);
+      // Only log resource requests occasionally to avoid spam
+      if (Math.random() < 0.05) { // Log 5% of resource requests
+        console.log(`🎯 Serving resource: ${resourcePath} for archive ${id}`);
       }
       
-      const result = await this.viewerService.getArchivedAsset(id, assetPath);
+      // First, try to serve as an HTML page
+      if (resourcePath.endsWith('.html') || resourcePath.endsWith('/') || !resourcePath.includes('.')) {
+        const pageResult = await this.viewerService.getArchivedPage(id, resourcePath);
+        if (pageResult) {
+          res.setHeader('Content-Type', pageResult.contentType);
+          res.send(pageResult.html);
+          return;
+        }
+      }
       
-      if (!result) {
+      // Otherwise, try to serve as an asset
+      const assetResult = await this.viewerService.getArchivedAsset(id, resourcePath);
+      
+      if (!assetResult) {
         // For missing assets, return empty content with appropriate type instead of 404
-        const ext = assetPath.split('.').pop()?.toLowerCase();
+        const ext = resourcePath.split('.').pop()?.toLowerCase();
         if (ext === 'js') {
           res.setHeader('Content-Type', 'application/javascript');
           res.send('// Missing JavaScript file - archived version not available');
@@ -145,17 +162,17 @@ export class ArchiveController {
         
         // Only log missing non-JS/CSS assets occasionally
         if (Math.random() < 0.01) {
-          console.log(`❌ Asset not found: ${assetPath}`);
+          console.log(`❌ Resource not found: ${resourcePath}`);
         }
-        res.status(404).json({ error: 'Asset not found' });
+        res.status(404).json({ error: 'Resource not found' });
         return;
       }
 
-      res.setHeader('Content-Type', result.contentType);
-      res.send(result.data);
+      res.setHeader('Content-Type', assetResult.contentType);
+      res.send(assetResult.data);
     } catch (error) {
-      console.error('Failed to get archive asset:', error);
-      res.status(500).json({ error: 'Failed to get archive asset' });
+      console.error('Failed to get archived resource:', error);
+      res.status(500).json({ error: 'Failed to get archived resource' });
     }
   };
 

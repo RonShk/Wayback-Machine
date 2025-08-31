@@ -210,44 +210,44 @@ export class AssetExtractor {
   private parseAssetsFromJavaScript(jsContent: string, baseUrl: string): Asset[] {
     const assets: Asset[] = [];
     
-    // Enhanced patterns for asset URLs in JavaScript
+    // Enhanced patterns to catch fetch calls and JSON files
     const patterns = [
-      // String literals with file extensions (more comprehensive)
-      /"([^"]*\.(glb|gltf|obj|fbx|dae|3ds|ply|stl|woff2?|ttf|eot|otf|png|jpe?g|gif|svg|webp|ico|css|js|mjs|json|xml|pdf|mp[34]|webm|ogg|wav|bin|data))"/gi,
-      /'([^']*\.(glb|gltf|obj|fbx|dae|3ds|ply|stl|woff2?|ttf|eot|otf|png|jpe?g|gif|svg|webp|ico|css|js|mjs|json|xml|pdf|mp[34]|webm|ogg|wav|bin|data))'/gi,
-      // Template literals
-      /`([^`]*\.(glb|gltf|obj|fbx|dae|3ds|ply|stl|woff2?|ttf|eot|otf|png|jpe?g|gif|svg|webp|ico|css|js|mjs|json|xml|pdf|mp[34]|webm|ogg|wav|bin|data))`/gi,
-      // Import statements (ES6 and CommonJS)
-      /import\s+.*?\s+from\s+['"]([^'"]+)['"]/gi,
-      /require\s*\(\s*['"]([^'"]+)['"]\s*\)/gi,
-      // Dynamic imports
-      /import\s*\(\s*['"]([^'"]+)['"]\s*\)/gi,
-      // Fetch calls and XHR
-      /fetch\s*\(\s*['"]([^'"]+)['"]/gi,
+      // Fetch calls - catch any URL in fetch()
+      /fetch\s*\(\s*['"]([^'"]+)['"]\s*\)/gi,
+      // JSON files specifically
+      /"([^"]*\.json)"/gi,
+      /'([^']*\.json)'/gi,
+      // Direct asset references with common extensions (including json now)
+      /"([^"]*\.(css|js|json|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|glb|gltf))"/gi,
+      /'([^']*\.(css|js|json|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|glb|gltf))'/gi,
+      // Import statements (ES6 and CommonJS) - only for actual files
+      /import\s+.*?\s+from\s+['"]([^'"]+\.(css|js|mjs|json))['"]/gi,
+      /require\s*\(\s*['"]([^'"]+\.(css|js|mjs|json))['"]\s*\)/gi,
+      // Dynamic imports - only for JS/CSS/JSON
+      /import\s*\(\s*['"]([^'"]+\.(js|mjs|css|json))['"]\s*\)/gi,
+      // Asset loading patterns - be more specific
+      /(?:src|href|url|path|file|asset)\s*[:=]\s*['"]([^'"]*\.(css|js|json|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|glb|gltf))['"]?/gi,
+      // URL constructor patterns - only for likely assets
+      /new\s+URL\s*\(\s*['"]([^'"]+\.(css|js|json|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|glb|gltf))['"]/gi,
+      // XMLHttpRequest patterns
       /\.open\s*\(\s*['"][^'"]*['"]\s*,\s*['"]([^'"]+)['"]/gi,
-      // Asset loading patterns
-      /(?:src|href|url|path|file|asset)\s*[:=]\s*['"]([^'"]*\.(glb|gltf|obj|fbx|dae|3ds|ply|stl|woff2?|ttf|eot|otf|png|jpe?g|gif|svg|webp|ico|css|js|mjs|json|xml|pdf|mp[34]|webm|ogg|wav|bin|data))['"]?/gi,
-      // Webpack chunk patterns
-      /["']([^"']*chunk[^"']*\.js)["']/gi,
-      /["']([^"']*-[a-f0-9]{8,}\.js)["']/gi,
-      // GitHub specific patterns
-      /["']([^"']*\/js\/[^"']*\.(glb|js|css|png|svg))["']/gi,
-      // URL constructor patterns
-      /new\s+URL\s*\(\s*['"]([^'"]+)['"]/gi,
-      // Asset path patterns in objects
-      /['"]?(?:path|url|src|href)['"]?\s*:\s*['"]([^'"]*\.(glb|gltf|obj|fbx|dae|3ds|ply|stl|woff2?|ttf|eot|otf|png|jpe?g|gif|svg|webp|ico|css|js|mjs|json|xml|pdf|mp[34]|webm|ogg|wav|bin|data))['"]?/gi,
+      // Axios and other HTTP library patterns
+      /(?:axios|http)\.get\s*\(\s*['"]([^'"]+)['"]/gi,
     ];
 
     for (const pattern of patterns) {
       let match;
       while ((match = pattern.exec(jsContent)) !== null) {
         const url = match[1];
-        if (url && !url.startsWith('data:') && !url.startsWith('blob:') && !url.startsWith('javascript:')) {
+        if (url && !url.startsWith('data:') && !url.startsWith('blob:') && !url.startsWith('javascript:') && this.isLikelyRealAsset(url)) {
           try {
             const resolvedUrl = this.resolveUrl(baseUrl, url);
             const assetType = this.determineAssetType(url);
             
-            console.log(`🔍 Found JS asset: ${resolvedUrl} (${assetType})`);
+            // Only log occasionally to reduce noise
+            if (Math.random() < 0.1) {
+              console.log(`🔍 Found JS asset: ${resolvedUrl} (${assetType})`);
+            }
             
             assets.push({
               url: resolvedUrl,
@@ -255,14 +255,35 @@ export class AssetExtractor {
               foundOn: baseUrl
             });
           } catch (error) {
-            // Skip invalid URLs
-            console.log(`⚠️ Skipping invalid URL from JS: ${url}`);
+            // Skip invalid URLs silently
           }
         }
       }
     }
 
     return assets;
+  }
+
+  /**
+   * Check if a URL is likely to be a real asset (not a template or placeholder)
+   */
+  private isLikelyRealAsset(url: string): boolean {
+    // Skip URLs that look like templates or placeholders
+    if (url.includes('${') || url.includes('{') || url.includes('%')) return false;
+    if (url.includes('__') || url.includes('{{')) return false;
+    if (url.length < 3 || url.length > 200) return false;
+    if (url.includes('localhost') || url.includes('127.0.0.1')) return false;
+    if (url.includes('example.') || url.includes('test.')) return false;
+    
+    // Must have a reasonable file extension or be a common API endpoint
+    const ext = url.split('.').pop()?.toLowerCase();
+    const validExts = ['css', 'js', 'mjs', 'json', 'png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'woff', 'woff2', 'ttf', 'glb', 'gltf'];
+    
+    // Also allow common API endpoints without extensions
+    const commonEndpoints = ['/spec', '/api/', '/swagger', '/openapi'];
+    const hasCommonEndpoint = commonEndpoints.some(endpoint => url.includes(endpoint));
+    
+    return validExts.includes(ext || '') || hasCommonEndpoint;
   }
 
   private async fetchJavaScriptContent(url: string): Promise<string | null> {

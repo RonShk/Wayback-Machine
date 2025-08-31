@@ -21,26 +21,31 @@ export class ViewerService {
       }
 
       const archiveDir = path.join(process.cwd(), 'archives', archiveId);
-      const pagesDir = path.join(archiveDir, 'pages');
 
       // If no specific page requested, try to find index page
       let targetFile: string;
       if (!pagePath) {
-        // Look for index.html or the first available HTML file
-        const files = await fs.readdir(pagesDir);
-        const indexFile = files.find(f => f === 'index.html') || files.find(f => f.endsWith('.html'));
-        if (!indexFile) {
-          return null;
+        // Look for index.html at the root
+        targetFile = path.join(archiveDir, 'index.html');
+        
+        // If not found, search for any HTML file
+        if (!(await this.fileExists(targetFile))) {
+          const htmlFiles = await this.findHtmlFiles(archiveDir);
+          if (htmlFiles.length === 0) {
+            return null;
+          }
+          targetFile = htmlFiles[0]; // Use the first HTML file found
         }
-        targetFile = path.join(pagesDir, indexFile);
       } else {
-        targetFile = path.join(pagesDir, pagePath);
+        // Handle both absolute and relative paths
+        if (pagePath.startsWith('/')) {
+          pagePath = pagePath.substring(1);
+        }
+        targetFile = path.join(archiveDir, pagePath);
       }
 
       // Check if file exists
-      try {
-        await fs.access(targetFile);
-      } catch {
+      if (!(await this.fileExists(targetFile))) {
         return null;
       }
 
@@ -106,7 +111,13 @@ export class ViewerService {
       }
 
       const archiveDir = path.join(process.cwd(), 'archives', archiveId);
-      const assetFile = path.join(archiveDir, 'assets', assetPath);
+      
+      // Handle both absolute and relative paths
+      if (assetPath.startsWith('/')) {
+        assetPath = assetPath.substring(1);
+      }
+      
+      const assetFile = path.join(archiveDir, assetPath);
 
       // Security check: ensure the path is within the archive directory
       const resolvedPath = path.resolve(assetFile);
@@ -116,9 +127,7 @@ export class ViewerService {
       }
 
       // Check if file exists
-      try {
-        await fs.access(assetFile);
-      } catch {
+      if (!(await this.fileExists(assetFile))) {
         // Log missing assets but don't spam the console
         if (Math.random() < 0.01) { // Only log 1% of missing assets to avoid spam
           console.log(`📄 Missing asset: ${assetPath} for archive ${archiveId}`);
@@ -171,10 +180,11 @@ export class ViewerService {
         return null;
       }
 
-      const pagesDir = path.join(process.cwd(), 'archives', archiveId, 'pages');
-      const files = await fs.readdir(pagesDir);
+      const archiveDir = path.join(process.cwd(), 'archives', archiveId);
+      const htmlFiles = await this.findHtmlFiles(archiveDir);
       
-      return files.filter(f => f.endsWith('.html'));
+      // Return relative paths from archive root
+      return htmlFiles.map(file => path.relative(archiveDir, file));
     } catch (error) {
       console.error('Failed to list archive pages:', error);
       return null;
@@ -219,5 +229,45 @@ export class ViewerService {
     };
 
     return mimeTypes[ext] || 'application/octet-stream';
+  }
+
+  /**
+   * Check if a file exists
+   */
+  private async fileExists(filePath: string): Promise<boolean> {
+    try {
+      await fs.access(filePath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Find all HTML files in a directory recursively
+   */
+  private async findHtmlFiles(dir: string): Promise<string[]> {
+    const htmlFiles: string[] = [];
+    
+    async function searchDir(currentDir: string) {
+      try {
+        const entries = await fs.readdir(currentDir, { withFileTypes: true });
+        
+        for (const entry of entries) {
+          const fullPath = path.join(currentDir, entry.name);
+          
+          if (entry.isDirectory()) {
+            await searchDir(fullPath);
+          } else if (entry.name.endsWith('.html')) {
+            htmlFiles.push(fullPath);
+          }
+        }
+      } catch (error) {
+        // Ignore directories we can't read
+      }
+    }
+    
+    await searchDir(dir);
+    return htmlFiles;
   }
 }

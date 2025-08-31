@@ -13,18 +13,27 @@ router.get('/list', archiveController.listArchives);
 router.post('/rearchive', archiveController.reArchiveUrl);
 router.get('/versions', archiveController.getArchiveVersions);
 
-// Viewer routes
-router.get('/view/:id', archiveController.viewArchive);
+// Viewer routes - specific routes must come BEFORE the catch-all
 router.get('/view/:id/pages', archiveController.getArchivePages);
-// Handle direct page access (e.g., /view/123/_dashboard_.html)
-router.get('/view/:id/:page', archiveController.viewArchive);
-// Handle nested asset paths (e.g., /assets/css/style.css, /assets/js/script.js, /assets/images/logo.png)
-router.get('/view/:id/assets/:folder/:file', archiveController.getArchiveAsset);
-router.get('/view/:id/assets/:file', archiveController.getArchiveAsset);
-// Handle deeply nested asset paths (e.g., /assets/fonts/subfolder/font.woff)
-router.get('/view/:id/assets/:folder/:subfolder/:file', archiveController.getArchiveAsset);
+router.get('/view/:id', archiveController.viewArchive);
 
-// Note: Removed wildcard routes as they cause Express routing issues
-// Fallback handling is done in the ArchiveController instead
+// Handle all other requests with middleware that checks the path
+router.use('/view/:id', (req, res, next) => {
+  // Check if this is exactly /view/:id or /view/:id/pages
+  const viewPath = `/api/archives/view/${req.params.id}`;
+  const fullPath = req.originalUrl || req.url;
+  
+  // Skip if this is exactly the base view path (handled above)
+  if (fullPath === viewPath || fullPath === `${viewPath}/`) {
+    return next();
+  }
+  // Skip if this is the pages endpoint (handled above)  
+  if (fullPath === `${viewPath}/pages`) {
+    return next();
+  }
+  
+  // Otherwise, handle as archived resource
+  archiveController.getArchivedResource(req, res);
+});
 
 export default router;
